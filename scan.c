@@ -229,6 +229,10 @@ escape(struct scanner *s, struct evalstring ***end)
 		bufadd(&buf, s->chr);
 		next(s);
 		break;
+	case '^':
+		bufadd(&buf, '\n');
+		next(s);
+		break;
 	case '{':
 		if (buf.len > 0)
 			addstringpart(end, false);

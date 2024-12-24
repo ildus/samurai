@@ -1,10 +1,21 @@
+#ifndef VMS
 #define _POSIX_C_SOURCE 200809L
+#else
+#define _VMS_WAIT
+#define _POSIX_EXIT
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <poll.h>
 #include <signal.h>
+
+#ifdef VMS
+#include <unixlib.h>
+#else
 #include <spawn.h>
+#endif
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +28,16 @@
 #include "graph.h"
 #include "log.h"
 #include "util.h"
+#include <string.h>
+#include <stdlib.h>
+#include <iodef.h>
+#include <ssdef.h>
+#include <stsdef.h>
+#include <descrip.h>
+#include <dvidef.h>
+#include <clidef.h>
+#include <lib$routines.h>
+#include <starlet.h>
 
 struct job {
 	struct string *cmd;
@@ -26,6 +47,10 @@ struct job {
 	pid_t pid;
 	int fd;
 	bool failed;
+#ifdef VMS
+    int fd2;
+	long status;
+#endif
 };
 
 struct buildoptions buildopts = {.maxfail = 1};
@@ -49,6 +74,21 @@ isnewer(struct node *n1, struct node *n2)
 {
 	return n1 && n1->mtime > n2->mtime;
 }
+
+#ifdef VMS
+void
+ast_job_finished(struct job *j)
+{
+    char buf[1] = {'~'};
+
+	if ((j->status & STS$K_SUCCESS) || $VMS_STATUS_SEVERITY(j->status) <= STS$K_WARNING)
+		j->failed = false;
+	else
+		j->failed = true;
+
+	write(j->fd2, buf, sizeof(buf));
+}
+#endif
 
 /* returns whether this output node is dirty in relation to the newest input */
 static bool
@@ -211,22 +251,22 @@ formatstatus(char *buf, size_t len)
 		n = 0;
 		switch (*fmt) {
 		case 's':
-			n = snprintf(buf, len, "%zu", nstarted);
+			n = snprintf(buf, len, "%lu", nstarted);
 			break;
 		case 'f':
-			n = snprintf(buf, len, "%zu", nfinished);
+			n = snprintf(buf, len, "%lu", nfinished);
 			break;
 		case 't':
-			n = snprintf(buf, len, "%zu", ntotal);
+			n = snprintf(buf, len, "%lu", ntotal);
 			break;
 		case 'r':
-			n = snprintf(buf, len, "%zu", nstarted - nfinished);
+			n = snprintf(buf, len, "%lu", nstarted - nfinished);
 			break;
 		case 'u':
-			n = snprintf(buf, len, "%zu", ntotal - nstarted);
+			n = snprintf(buf, len, "%lu", ntotal - nstarted);
 			break;
 		case 'p':
-			n = snprintf(buf, len, "%3zu%%", 100 * nfinished / ntotal);
+			n = snprintf(buf, len, "%3lu%%", 100 * nfinished / ntotal);
 			break;
 		case 'o':
 			if (clock_gettime(CLOCK_MONOTONIC, &endtime) != 0) {
@@ -244,7 +284,7 @@ formatstatus(char *buf, size_t len)
 			break;
 		default:
 			fatal("unknown placeholder '%%%c' in $NINJA_STATUS", *fmt);
-			continue;  /* unreachable, but avoids warning */
+			continue; /* unreachable, but avoids warning */
 		}
 		if (n < 0)
 			fatal("snprintf:");
@@ -273,6 +313,88 @@ printstatus(struct edge *e, struct string *cmd)
 	puts(description->s);
 }
 
+#ifdef VMS
+static int
+jobstart(struct job *j, struct edge *e)
+{
+	size_t i;
+	struct node *n;
+	struct string *rspfile, *content;
+	int fd[2];
+	static int nullfd = 0;
+	int flags;
+	int status;
+
+	if (nullfd == 0) {
+		nullfd = open("/nla0", O_RDONLY, 0);
+		if (nullfd == -1) {
+			warn("nullfd");
+			goto err0;
+		}
+	}
+
+	struct dsc$descriptor_s command;
+
+	$DESCRIPTOR(input, "SYS$INPUT");
+	$DESCRIPTOR(output, "SYS$OUTPUT");
+
+	++nstarted;
+	for (i = 0; i < e->nout; ++i) {
+		n = e->out[i];
+		if (n->mtime == MTIME_MISSING) {
+			if (makedirs(n->path, true) < 0)
+				goto err0;
+		}
+	}
+	rspfile = edgevar(e, "rspfile", false);
+	if (rspfile) {
+		content = edgevar(e, "rspfile_content", true);
+		if (writefile(rspfile->s, content) < 0)
+			goto err0;
+	}
+
+	if (pipe(fd, O_NONBLOCK) < 0) {
+		warn("pipe:");
+		goto err1;
+	}
+	j->edge = e;
+	j->cmd = edgevar(e, "command", true);
+	j->fd = fd[0];
+	j->fd2 = fd[1];
+    j->status = 0;
+
+	/* Prepare a command to run and run! */
+	command.dsc$w_length = strlen(j->cmd->s);
+	command.dsc$a_pointer = j->cmd->s;
+	command.dsc$b_class = DSC$K_CLASS_S;
+	command.dsc$b_dtype = DSC$K_DTYPE_T;
+
+	if (!consoleused) {
+		printstatus(e, j->cmd);
+	}
+
+	flags = CLI$M_NOWAIT;
+	status = lib$spawn(&command, 0, 0, &flags, 0, &j->pid,
+	                   &j->status, 0, ast_job_finished, j);
+
+	if (!(status & SS$_NORMAL)) {
+		warn("execl %s:", j->cmd->s);
+		goto err2;
+	}
+
+	j->failed = false;
+	return j->fd;
+
+err2:
+	close(fd[0]);
+	close(fd[1]);
+err1:
+	if (rspfile && !buildopts.keeprsp)
+		unlink(rspfile->s);
+err0:
+	return -1;
+}
+#else
 static int
 jobstart(struct job *j, struct edge *e)
 {
@@ -295,6 +417,7 @@ jobstart(struct job *j, struct edge *e)
 	rspfile = edgevar(e, "rspfile", false);
 	if (rspfile) {
 		content = edgevar(e, "rspfile_content", true);
+		printf("%s\n", content->s);
 		if (writefile(rspfile->s, content) < 0)
 			goto err0;
 	}
@@ -360,6 +483,7 @@ err1:
 err0:
 	return -1;
 }
+#endif
 
 static void
 nodedone(struct node *n, bool prune)
@@ -425,8 +549,9 @@ edgedone(struct edge *e)
 		nodedone(n, restat && shouldprune(e, n, old));
 	}
 	rspfile = edgevar(e, "rspfile", false);
-	if (rspfile && !buildopts.keeprsp)
-		remove(rspfile->s);
+	if (rspfile && !buildopts.keeprsp) {
+		unlink(rspfile->s);
+	}
 	edgehash(e);
 	depsrecord(e);
 	for (i = 0; i < e->nout; ++i) {
@@ -442,25 +567,36 @@ jobdone(struct job *j)
 	int status;
 	struct edge *e, *new;
 	struct pool *p;
+	int buf[100];
+	int n;
 
 	++nfinished;
+
+#ifndef VMS
 	if (waitpid(j->pid, &status, 0) < 0) {
 		warn("waitpid %d:", j->pid);
 		j->failed = true;
-	} else if (WIFEXITED(status)) {
-		if (WEXITSTATUS(status) != 0) {
-			warn("job failed with status %d: %s", WEXITSTATUS(status), j->cmd->s);
+		printf("fail\n");
+	} else {
+		if (WIFEXITED(status)) {
+			if (WEXITSTATUS(status) != 0) {
+				warn("job failed with status %d: %s", WEXITSTATUS(status), j->cmd->s);
+				j->failed = true;
+			}
+		} else if (WIFSIGNALED(status)) {
+			warn("job terminated due to signal %d: %s", WTERMSIG(status), j->cmd->s);
+			j->failed = true;
+		} else {
+			/* cannot happen according to POSIX */
+			warn("job status unknown: %s", j->cmd->s);
 			j->failed = true;
 		}
-	} else if (WIFSIGNALED(status)) {
-		warn("job terminated due to signal %d: %s", WTERMSIG(status), j->cmd->s);
-		j->failed = true;
-	} else {
-		/* cannot happen according to POSIX */
-		warn("job status unknown: %s", j->cmd->s);
-		j->failed = true;
 	}
+#endif
+
 	close(j->fd);
+	close(j->fd2);
+
 	if (j->buf.len && (!consoleused || j->failed))
 		fwrite(j->buf.data, 1, j->buf.len, stdout);
 	j->buf.len = 0;
@@ -503,9 +639,14 @@ jobwork(struct job *j)
 		j->buf.data = newdata;
 	}
 	n = read(j->fd, j->buf.data + j->buf.len, j->buf.cap - j->buf.len);
+
 	if (n > 0) {
+#ifdef VMS
+        goto done;
+#else
 		j->buf.len += n;
 		return true;
+#endif
 	}
 	if (n == 0)
 		goto done;
@@ -585,7 +726,7 @@ build(void)
 					jobs[i].buf.cap = 0;
 					jobs[i].next = i + 1;
 					fds[i].fd = -1;
-					fds[i].events = POLLIN;
+					fds[i].events = POLLIN | POLLPRI;
 				}
 			}
 			fds[next].fd = jobstart(&jobs[next], e);
@@ -604,6 +745,7 @@ build(void)
 		for (i = 0; i < jobslen; ++i) {
 			if (!fds[i].revents || jobwork(&jobs[i]))
 				continue;
+
 			--numjobs;
 			jobs[i].next = next;
 			fds[i].fd = -1;
@@ -624,5 +766,5 @@ build(void)
 		else
 			fatal("subcommand failed");
 	}
-	ntotal = 0;  /* reset in case we just rebuilt the manifest */
+	ntotal = 0; /* reset in case we just rebuilt the manifest */
 }

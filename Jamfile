@@ -1,0 +1,8 @@
+CFLAGS = $(CFLAGS) -std=c99 -Wall -Wextra -Wshadow -Wmissing-prototypes -Wpedantic -Wno-unused-parameter ;
+SRC = build.c deps.c env.c graph.c htab.c log.c parse.c samu.c scan.c tool.c tree.c util.c ;
+HDR =  arg.h build.h deps.h env.h graph.h htab.h log.h parse.h  scan.h
+        tool.h tree.h util.h ;
+
+Main samu : $(SRC) ;
+Includes $(SRC) : $(HDR) ;
+Depends exe : samu ;

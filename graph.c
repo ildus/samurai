@@ -9,6 +9,24 @@
 #include "graph.h"
 #include "htab.h"
 #include "util.h"
+#include "time.h"
+
+#ifdef VMS
+#include <rms.h>
+#include <iodef.h>
+#include <ssdef.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <descrip.h>
+#include <lbrdef.h>
+#include <lbr$routines.h>
+#include <credef.h>
+#include <mhddef.h>
+#include <lhidef.h>
+#include <lib$routines.h>
+#include <starlet.h>
+#endif
 
 static struct hashtable *allnodes;
 struct edge *alledges;
@@ -81,6 +99,50 @@ nodeget(const char *path, size_t len)
 	return htabget(allnodes, &k);
 }
 
+#ifdef VMS
+#define DEFAULT_FILE_SPECIFICATION "[]*.*;0"
+
+static void
+get_file_revtime(const char *path, int64_t *out)
+{
+	struct FAB xfab;
+	struct NAM xnam;
+	struct XABDAT xab;
+	char esa[256];
+	char filename[256];
+
+	/* get the input file specification
+	 */
+	memset(out, 0, sizeof(*out));
+	memset(filename, 0, sizeof(filename));
+	memset(esa, 0, sizeof(esa));
+
+	xnam = cc$rms_nam;
+	xnam.nam$l_esa = esa;
+	xnam.nam$b_ess = sizeof(esa) - 1;
+	xnam.nam$l_rsa = filename;
+	xnam.nam$b_rss = sizeof(filename) - 1;
+
+	xab = cc$rms_xabdat;       /* initialize extended attributes */
+	xab.xab$b_cod = XAB$C_DAT; /* ask for date */
+	xab.xab$l_nxt = NULL;      /* terminate XAB chain      */
+
+	xfab = cc$rms_fab;
+	xfab.fab$l_dna = (__char_ptr32)DEFAULT_FILE_SPECIFICATION;
+	xfab.fab$b_dns = sizeof(DEFAULT_FILE_SPECIFICATION) - 1;
+	xfab.fab$l_fop = FAB$M_NAM;
+	xfab.fab$l_fna = (__char_ptr32)path; /* address of file name	    */
+	xfab.fab$b_fns = strlen(path);       /* length of file name	    */
+	xfab.fab$l_nam = &xnam;              /* address of NAB block	    */
+	xfab.fab$l_xab = (char *)&xab;       /* address of XAB block     */
+
+	sys$open(&xfab);
+	sys$close(&xfab);
+
+	*out = xab.xab$q_rdt;
+}
+#endif
+
 void
 nodestat(struct node *n)
 {
@@ -91,7 +153,9 @@ nodestat(struct node *n)
 			fatal("stat %s:", n->path->s);
 		n->mtime = MTIME_MISSING;
 	} else {
-#ifdef __APPLE__
+#ifdef VMS
+		get_file_revtime(n->path->s, &n->mtime);
+#elif defined(__APPLE__)
 		n->mtime = (int64_t)st.st_mtime * 1000000000 + st.st_mtimensec;
 /*
 Illumos hides the members of st_mtim when you define _POSIX_C_SOURCE

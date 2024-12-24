@@ -53,8 +53,8 @@ struct entry {
 	int64_t mtime;
 };
 
-static const char depsname[] = ".ninja_deps";
-static const char depstmpname[] = ".ninja_deps.tmp";
+static const char depsname[] = "_ninja.deps";
+static const char depstmpname[] = "_ninja_tmp.deps";
 static const char depsheader[] = "# ninjadeps\n";
 static const uint32_t depsver = 4;
 static FILE *depsfile;
