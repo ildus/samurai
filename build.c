@@ -30,6 +30,8 @@
 #include "util.h"
 #include <string.h>
 #include <stdlib.h>
+
+#ifdef VMS
 #include <iodef.h>
 #include <ssdef.h>
 #include <stsdef.h>
@@ -38,6 +40,7 @@
 #include <clidef.h>
 #include <lib$routines.h>
 #include <starlet.h>
+#endif
 
 struct job {
 	struct string *cmd;
@@ -46,9 +49,9 @@ struct job {
 	size_t next;
 	pid_t pid;
 	int fd;
+	int fd2;
 	bool failed;
 #ifdef VMS
-    int fd2;
 	long status;
 #endif
 };
@@ -79,7 +82,7 @@ isnewer(struct node *n1, struct node *n2)
 void
 ast_job_finished(struct job *j)
 {
-    char buf[1] = {'~'};
+	char buf[1] = {'~'};
 
 	if ((j->status & STS$K_SUCCESS) || $VMS_STATUS_SEVERITY(j->status) <= STS$K_WARNING)
 		j->failed = false;
@@ -321,17 +324,8 @@ jobstart(struct job *j, struct edge *e)
 	struct node *n;
 	struct string *rspfile, *content;
 	int fd[2];
-	static int nullfd = 0;
 	int flags;
 	int status;
-
-	if (nullfd == 0) {
-		nullfd = open("/nla0", O_RDONLY, 0);
-		if (nullfd == -1) {
-			warn("nullfd");
-			goto err0;
-		}
-	}
 
 	struct dsc$descriptor_s command;
 
@@ -361,7 +355,7 @@ jobstart(struct job *j, struct edge *e)
 	j->cmd = edgevar(e, "command", true);
 	j->fd = fd[0];
 	j->fd2 = fd[1];
-    j->status = 0;
+	j->status = 0;
 
 	/* Prepare a command to run and run! */
 	command.dsc$w_length = strlen(j->cmd->s);
@@ -429,6 +423,7 @@ jobstart(struct job *j, struct edge *e)
 	j->edge = e;
 	j->cmd = edgevar(e, "command", true);
 	j->fd = fd[0];
+	j->fd2 = -1;
 	argv[2] = j->cmd->s;
 
 	if (!consoleused)
@@ -567,8 +562,6 @@ jobdone(struct job *j)
 	int status;
 	struct edge *e, *new;
 	struct pool *p;
-	int buf[100];
-	int n;
 
 	++nfinished;
 
@@ -595,7 +588,9 @@ jobdone(struct job *j)
 #endif
 
 	close(j->fd);
-	close(j->fd2);
+
+	if (j->fd2 > 0)
+		close(j->fd2);
 
 	if (j->buf.len && (!consoleused || j->failed))
 		fwrite(j->buf.data, 1, j->buf.len, stdout);
@@ -642,7 +637,7 @@ jobwork(struct job *j)
 
 	if (n > 0) {
 #ifdef VMS
-        goto done;
+		goto done;
 #else
 		j->buf.len += n;
 		return true;
