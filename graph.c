@@ -11,7 +11,7 @@
 #include "util.h"
 #include "time.h"
 
-#ifdef VMS
+#ifdef __VMS
 #include <rms.h>
 #include <iodef.h>
 #include <ssdef.h>
@@ -99,7 +99,7 @@ nodeget(const char *path, size_t len)
 	return htabget(allnodes, &k);
 }
 
-#ifdef VMS
+#ifdef __VMS
 #define DEFAULT_FILE_SPECIFICATION "[]*.*;0"
 
 static void
@@ -153,7 +153,7 @@ nodestat(struct node *n)
 			fatal("stat %s:", n->path->s);
 		n->mtime = MTIME_MISSING;
 	} else {
-#ifdef VMS
+#ifdef __VMS
 		get_file_revtime(n->path->s, &n->mtime);
 #elif defined(__APPLE__)
 		n->mtime = (int64_t)st.st_mtime * 1000000000 + st.st_mtimensec;

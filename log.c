@@ -8,8 +8,12 @@
 #include "util.h"
 
 static FILE *logfile;
-static const char *logname = "_ninja.log";
-static const char *logtmpname = "_ninja_tmp.log";
+#ifdef __VMS
+static const char *logname = ".ninja_log.";
+#else
+static const char *logname = ".ninja_log";
+#endif
+static const char *logtmpname = ".ninja_log.tmp";
 static const char *logfmt = "# ninja log v%d\n";
 static const int logver = 5;
 

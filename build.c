@@ -1,4 +1,4 @@
-#ifndef VMS
+#ifndef __VMS
 #define _POSIX_C_SOURCE 200809L
 #else
 #define _VMS_WAIT
@@ -10,7 +10,7 @@
 #include <poll.h>
 #include <signal.h>
 
-#ifdef VMS
+#ifdef __VMS
 #include <unixlib.h>
 #else
 #include <spawn.h>
@@ -31,7 +31,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#ifdef VMS
+#ifdef __VMS
 #include <iodef.h>
 #include <ssdef.h>
 #include <stsdef.h>
@@ -51,7 +51,7 @@ struct job {
 	int fd;
 	int fd2;
 	bool failed;
-#ifdef VMS
+#ifdef __VMS
 	long status;
 #endif
 };
@@ -61,6 +61,12 @@ static struct edge *work;
 static size_t nstarted, nfinished, ntotal;
 static bool consoleused;
 static struct timespec starttime;
+
+#ifdef __VMS
+#define SIZET_FMT "lu"
+#else
+#define SIZET_FMT "zu"
+#endif
 
 void
 buildreset(void)
@@ -78,7 +84,7 @@ isnewer(struct node *n1, struct node *n2)
 	return n1 && n1->mtime > n2->mtime;
 }
 
-#ifdef VMS
+#ifdef __VMS
 void
 ast_job_finished(struct job *j)
 {
@@ -254,22 +260,22 @@ formatstatus(char *buf, size_t len)
 		n = 0;
 		switch (*fmt) {
 		case 's':
-			n = snprintf(buf, len, "%lu", nstarted);
+			n = snprintf(buf, len, "%" SIZET_FMT, nstarted);
 			break;
 		case 'f':
-			n = snprintf(buf, len, "%lu", nfinished);
+			n = snprintf(buf, len, "%" SIZET_FMT, nfinished);
 			break;
 		case 't':
-			n = snprintf(buf, len, "%lu", ntotal);
+			n = snprintf(buf, len, "%" SIZET_FMT, ntotal);
 			break;
 		case 'r':
-			n = snprintf(buf, len, "%lu", nstarted - nfinished);
+			n = snprintf(buf, len, "%" SIZET_FMT, nstarted - nfinished);
 			break;
 		case 'u':
-			n = snprintf(buf, len, "%lu", ntotal - nstarted);
+			n = snprintf(buf, len, "%" SIZET_FMT, ntotal - nstarted);
 			break;
 		case 'p':
-			n = snprintf(buf, len, "%3lu%%", 100 * nfinished / ntotal);
+			n = snprintf(buf, len, "%3" SIZET_FMT "%%", 100 * nfinished / ntotal);
 			break;
 		case 'o':
 			if (clock_gettime(CLOCK_MONOTONIC, &endtime) != 0) {
@@ -316,7 +322,7 @@ printstatus(struct edge *e, struct string *cmd)
 	puts(description->s);
 }
 
-#ifdef VMS
+#ifdef __VMS
 static int
 jobstart(struct job *j, struct edge *e)
 {
@@ -411,7 +417,6 @@ jobstart(struct job *j, struct edge *e)
 	rspfile = edgevar(e, "rspfile", false);
 	if (rspfile) {
 		content = edgevar(e, "rspfile_content", true);
-		printf("%s\n", content->s);
 		if (writefile(rspfile->s, content) < 0)
 			goto err0;
 	}
@@ -565,7 +570,7 @@ jobdone(struct job *j)
 
 	++nfinished;
 
-#ifndef VMS
+#ifndef __VMS
 	if (waitpid(j->pid, &status, 0) < 0) {
 		warn("waitpid %d:", j->pid);
 		j->failed = true;
@@ -636,7 +641,7 @@ jobwork(struct job *j)
 	n = read(j->fd, j->buf.data + j->buf.len, j->buf.cap - j->buf.len);
 
 	if (n > 0) {
-#ifdef VMS
+#ifdef __VMS
 		goto done;
 #else
 		j->buf.len += n;
