@@ -54,11 +54,12 @@ struct entry {
 };
 
 #ifdef __VMS
-static const char depsname[] = ".ninja_deps.";
+static const char depsname[] = "_ninja.deps";
+static const char depstmpname[] = "_ninja_deps.tmp";
 #else
 static const char depsname[] = ".ninja_deps";
-#endif
 static const char depstmpname[] = ".ninja_deps.tmp";
+#endif
 static const char depsheader[] = "# ninjadeps\n";
 static const uint32_t depsver = 4;
 static FILE *depsfile;

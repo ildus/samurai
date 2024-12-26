@@ -9,11 +9,12 @@
 
 static FILE *logfile;
 #ifdef __VMS
-static const char *logname = ".ninja_log.";
+static const char *logname = "_ninja.log";
+static const char *logtmpname = "_ninja_log.tmp";
 #else
 static const char *logname = ".ninja_log";
-#endif
 static const char *logtmpname = ".ninja_log.tmp";
+#endif
 static const char *logfmt = "# ninja log v%d\n";
 static const int logver = 5;
 
