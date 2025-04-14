@@ -348,7 +348,7 @@ jobstart(struct job *j, struct edge *e)
 	}
 	rspfile = edgevar(e, "rspfile", false);
 	if (rspfile) {
-		content = edgevar(e, "rspfile_content", true);
+		content = edgevar(e, "rspfile_content", false);
 		if (writefile(rspfile->s, content) < 0)
 			goto err0;
 	}
